@@ -1628,4 +1628,4 @@ fun AppIcon(
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
         )
     }
-}
+}// trigger CodeRabbit

@@ -99,6 +99,7 @@ private const val KEY_FOLDERS_PREFIX = "folder_"
 private const val KEY_FOLDER_COLOR_PREFIX = "folder_color_"
 private const val KEY_FOLDER_ICON_PREFIX = "folder_icon_"
 private const val KEY_FOLDER_CUSTOM_IMAGE_PREFIX = "folder_custom_image_"
+private const val KEY_INTELLIGENT_POPUP_SHOWN = "intelligent_popup_shown"
 
 // Predefined colors for folders
 val folderColors = listOf(
@@ -340,6 +341,13 @@ fun FoldersScreen(
     var suggestedAppsForDialog by remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
     var activeFolderForSuggestion by remember { mutableStateOf<AppFolder?>(null) }
 
+    // Educational Popup state
+    var showEducationalPopup by remember { mutableStateOf(false) }
+    var educationalPopupShown by remember {
+        mutableStateOf(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_INTELLIGENT_POPUP_SHOWN, false))
+    }
+
     // Smart Suggestions Dialog
     if (showSuggestionDialog && activeFolderForSuggestion != null && suggestedAppsForDialog.isNotEmpty()) {
         val currentActiveFolder = activeFolderForSuggestion!!
@@ -375,6 +383,54 @@ fun FoldersScreen(
             },
             dismissButton = {
                 Button(onClick = { showSuggestionDialog = false }) { Text("No, Thanks") }
+            }
+        )
+    }
+
+    // Educational Popup for Intelligent Folder Suggestions
+    if (showEducationalPopup) {
+        AlertDialog(
+            onDismissRequest = { showEducationalPopup = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Lightbulb,
+                        contentDescription = null,
+                        tint = Color(0xFFFFA000), // Amber color
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Discover Smart Organization!")
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        "Find similar apps automatically using Intelligent Folder Suggestions in the menu above.",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "💡 Tip: Add a few apps to a folder and let the app suggest related ones for you!",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showEducationalPopup = false },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF4CAF50) // Green color
+                    )
+                ) {
+                    Text("Got it!")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEducationalPopup = false }) {
+                    Text("Skip")
+                }
             }
         )
     }
@@ -445,6 +501,7 @@ fun FoldersScreen(
             // Folder detail view with kebab menu inside
             FolderDetailView(
                 folder = selectedFolder!!,
+                folders = folders,
                 unassignedApps = unassignedApps,
                 pm = pm,
                 onBack = { selectedFolder = null },
@@ -454,6 +511,13 @@ fun FoldersScreen(
                     activeFolderForSuggestion = folder
                     suggestedAppsForDialog = suggestions
                     showSuggestionDialog = true
+                },
+                educationalPopupShown = educationalPopupShown,
+                onEducationalPopupTriggered = {
+                    showEducationalPopup = true
+                    educationalPopupShown = true
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putBoolean(KEY_INTELLIGENT_POPUP_SHOWN, true).apply()
                 }
             )
         }
@@ -463,12 +527,15 @@ fun FoldersScreen(
 @Composable
 fun FolderDetailView(
     folder: AppFolder,
+    folders: MutableList<AppFolder>,
     unassignedApps: List<ApplicationInfo>,
     pm: PackageManager,
     onBack: () -> Unit,
     onFoldersUpdated: () -> Unit,
     findSuggestions: (AppFolder, List<ApplicationInfo>) -> List<ApplicationInfo>,
-    onShowSuggestions: (AppFolder, List<ApplicationInfo>) -> Unit
+    onShowSuggestions: (AppFolder, List<ApplicationInfo>) -> Unit,
+    educationalPopupShown: Boolean,
+    onEducationalPopupTriggered: () -> Unit
 ) {
     var searchText by remember { mutableStateOf("") }
     var showDropdownMenu by remember { mutableStateOf(false) }
@@ -534,6 +601,25 @@ fun FolderDetailView(
                             showCustomizeDialog = true
                         }
                     )
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Lightbulb, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Intelligent Folder Suggestions")
+                            }
+                        },
+                        onClick = {
+                            showDropdownMenu = false
+                            // Trigger smart suggestions for current folder
+                            val suggestions = findSuggestions(folder, unassignedApps)
+                            if (suggestions.isNotEmpty()) {
+                                onShowSuggestions(folder, suggestions)
+                            } else {
+                                Toast.makeText(context, "No suggestions available for this folder", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -589,6 +675,11 @@ fun FolderDetailView(
                         if (!folder.apps.any { it.packageName == appToAdd.packageName }) {
                             folder.apps.add(appToAdd)
                             Toast.makeText(context, "'${appToAdd.loadLabel(pm)}' added to '${folder.name}'", Toast.LENGTH_SHORT).show()
+
+                            // Check if this is the second app added and popup hasn't been shown yet
+                            if (folder.apps.size == 2 && !educationalPopupShown) {
+                                onEducationalPopupTriggered()
+                            }
 
                             val potentialSuggestions = findSuggestions(folder, unassignedApps.filterNot { it.packageName == appToAdd.packageName })
                             if (potentialSuggestions.isNotEmpty()) {
@@ -1190,367 +1281,7 @@ fun ImageCropperDialog(
         }
     }
 
-    // Folder Customization Dialog
-    if (!showImageCropper) {
-        // Show the main customization dialog
-        Dialog(
-            onDismissRequest = onDismiss,
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .padding(16.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp)
-                ) {
-                    Text(
-                        text = "Customize '${folder.name}'",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
 
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Custom Image Section
-                    Text(
-                        text = "Custom Image",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        // Upload Image Button
-                        Button(
-                            onClick = { imagePickerLauncher.launch("image/*") },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Filled.Upload, contentDescription = null)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Upload Image")
-                        }
-
-                        // Clear Image Button
-                        if (croppedImageBase64 != null) {
-                            OutlinedButton(
-                                onClick = { croppedImageBase64 = null },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Filled.Clear, contentDescription = null)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Clear")
-                            }
-                        }
-                    }
-
-                    // Preview current custom image
-                    if (croppedImageBase64 != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Preview: ")
-                            val bitmap = remember(croppedImageBase64) {
-                                base64ToBitmap(croppedImageBase64!!)
-                            }
-                            bitmap?.let {
-                                Image(
-                                    bitmap = it.asImageBitmap(),
-                                    contentDescription = "Custom folder preview",
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .clip(RoundedCornerShape(8.dp)),
-                                    contentScale = ContentScale.Crop
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Color Selection (always available)
-                    Text(
-                        text = "Folder Color",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(folderColors) { color ->
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(color)
-                                    .border(
-                                        width = if (selectedColor == color) 3.dp else 1.dp,
-                                        color = if (selectedColor == color) Color.White else Color.Gray,
-                                        shape = CircleShape
-                                    )
-                                    .clickable { selectedColor = color },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (selectedColor == color) {
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = "Selected",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Icon Selection (only show if no custom image)
-                    if (croppedImageBase64 == null) {
-                        Text(
-                            text = "Predefined Icons",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(folderIcons.entries.toList()) { (iconType, icon) ->
-                                Card(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .clickable { selectedIconType = iconType },
-                                    elevation = CardDefaults.cardElevation(
-                                        defaultElevation = if (selectedIconType == iconType) 4.dp else 1.dp
-                                    ),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = if (selectedIconType == iconType)
-                                            selectedColor.copy(alpha = 0.2f)
-                                        else
-                                            MaterialTheme.colorScheme.surface
-                                    )
-                                ) {
-                                    Box(
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            icon,
-                                            contentDescription = iconType.name,
-                                            modifier = Modifier.size(24.dp),
-                                            tint = selectedColor
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // Action Buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(onClick = onDismiss) {
-                            Text("Cancel")
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                onSave(
-                                    folder.copy(
-                                        color = selectedColor,
-                                        iconType = selectedIconType,
-                                        customImageBase64 = croppedImageBase64
-                                    )
-                                )
-                            }
-                        ) {
-                            Text("Apply")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Image Cropper Dialog
-    if (showImageCropper && selectedImageUri != null) {
-        Dialog(
-            onDismissRequest = {
-                showImageCropper = false
-                selectedImageUri = null
-            },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth(0.95f)
-                    .fillMaxHeight(0.85f),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Crop Image",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    if (isLoading) {
-                        Box(
-                            modifier = Modifier
-                                .size(300.dp)
-                                .background(Color.Gray.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
-                        }
-                    } else {
-                        bitmap?.let { bmp ->
-                            // Cropping interface
-                            Box(
-                                modifier = Modifier
-                                    .size(300.dp)
-                                    .background(Color.Black, RoundedCornerShape(8.dp))
-                                    .clip(RoundedCornerShape(8.dp))
-                            ) {
-                                // Image with transformations
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "Image to crop",
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .graphicsLayer(
-                                            scaleX = cropState.scale,
-                                            scaleY = cropState.scale,
-                                            translationX = cropState.offsetX,
-                                            translationY = cropState.offsetY
-                                        )
-                                        .pointerInput(Unit) {
-                                            detectDragGestures { _, dragAmount ->
-                                                cropState = cropState.copy(
-                                                    offsetX = cropState.offsetX + dragAmount.x,
-                                                    offsetY = cropState.offsetY + dragAmount.y
-                                                )
-                                            }
-                                        },
-                                    contentScale = ContentScale.Fit
-                                )
-
-                                // Crop overlay with hole in the center
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val cropSizePx = 200.dp.toPx()
-                                    val centerX = size.width / 2
-                                    val centerY = size.height / 2
-                                    val cropLeft = centerX - cropSizePx / 2
-                                    val cropTop = centerY - cropSizePx / 2
-
-                                    // Draw dark overlay everywhere
-                                    drawRect(
-                                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
-                                        size = size
-                                    )
-
-                                    // Clear the crop area
-                                    drawRect(
-                                        color = androidx.compose.ui.graphics.Color.Transparent,
-                                        topLeft = Offset(cropLeft, cropTop),
-                                        size = Size(cropSizePx, cropSizePx),
-                                        blendMode = androidx.compose.ui.graphics.BlendMode.Clear
-                                    )
-
-                                    // Draw crop border
-                                    drawRect(
-                                        color = androidx.compose.ui.graphics.Color.White,
-                                        topLeft = Offset(cropLeft, cropTop),
-                                        size = Size(cropSizePx, cropSizePx),
-                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // Controls
-                            Column {
-                                Text("Zoom: ${(cropState.scale * 100).roundToInt()}%")
-                                Slider(
-                                    value = cropState.scale,
-                                    onValueChange = { scale ->
-                                        cropState = cropState.copy(scale = scale)
-                                    },
-                                    valueRange = 0.1f..3f,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                OutlinedButton(
-                                    onClick = { cropState = CropState() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Reset")
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Action Buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(
-                            onClick = {
-                                showImageCropper = false
-                                selectedImageUri = null
-                            }
-                        ) {
-                            Text("Cancel")
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                bitmap?.let { bmp ->
-                                    val croppedBitmap = cropAndResizeBitmap(bmp, cropState)
-                                    val base64 = bitmapToBase64(croppedBitmap)
-                                    onImageCropped(base64)
-                                }
-                            },
-                            enabled = !isLoading && bitmap != null
-                        ) {
-                            Text("Apply Crop")
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 // Helper function to crop and resize bitmap

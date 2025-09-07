@@ -70,6 +70,7 @@ import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import com.example.smartapporganizer.categorization.ScoredCategorizer
 
 // Updated Folder model with custom image support
 data class AppFolder(
@@ -132,7 +133,7 @@ val folderIcons = mapOf(
 val appCategoryKeywords: Map<String, List<String>> = mapOf(
     "Payment" to listOf("pay", "upi", "wallet", "gpay", "phonepe", "paytm", "bhim", "mobikwik", "bill", "finance", "bank", "payment", "send money"),
     "Shopping" to listOf("shop", "buy", "store", "deal", "cart", "amazon", "flipkart", "myntra", "commerce", "market", "order", "delivery"),
-    "Social" to listOf("social", "chat", "message", "insta", "facebook", "twitter", "whatsapp", "connect", "friend", "network", "messenger", "telegram"),
+    "Social" to listOf("social", "message", "insta", "facebook", "twitter", "whatsapp", "connect", "friend", "network", "messenger", "telegram","tiktok", "linkedin","snap"),
     "Games" to listOf("game", "play", "rpg", "puzzle", "arcade", "gaming", "ludo", "chess"),
     "Travel" to listOf("travel", "trip", "hotel", "flight", "booking", "map", "navigation", "cab", "taxi", "irctc", "makemytrip"),
     "Music" to listOf("music", "song", "audio", "spotify", "wynk", "gaana", "jiosaavn", "player", "sound"),
@@ -141,6 +142,24 @@ val appCategoryKeywords: Map<String, List<String>> = mapOf(
     "Food" to listOf("food", "order", "delivery", "zomato", "swiggy", "restaurant", "eat", "recipe"),
     "News" to listOf("news", "article", "headline", "breaking", "times", "update")
 )
+
+    
+
+// === PERMISSION-BASED CATEGORIZATION SYSTEM START ===
+
+// Permission-based categorization keywords for smart analysis
+val permissionBasedKeywords: Map<String, List<String>> = mapOf(
+    "Photography" to listOf("photo", "camera", "gallery", "picture", "image", "shot", "lens", "capture", "album"),
+    "Social" to listOf("social", "chat", "message", "insta", "facebook", "twitter", "whatsapp", "connect", "friend", "network", "messenger", "telegram", "snap", "tiktok", "linkedin"),
+    "Shopping" to listOf("shop", "buy", "store", "deal", "cart", "amazon", "flipkart", "myntra", "commerce", "market", "order", "delivery", "ebay", "aliexpress"),
+    "Navigation" to listOf("map", "navigation", "gps", "location", "route", "direction", "travel", "uber", "ola", "lyft"),
+    "Communication" to listOf("call", "phone", "contact", "dial", "message", "sms", "voip", "skype", "zoom", "teams"),
+    "Music" to listOf("music", "song", "audio", "spotify", "wynk", "gaana", "jiosaavn", "player", "sound", "tune", "melody"),
+    "Banking" to listOf("bank", "finance", "pay", "wallet", "upi", "gpay", "phonepe", "paytm", "bhim", "mobikwik", "account", "transaction", "deposit", "check"),
+    "AI" to listOf("ai", "artificial", "intelligence", "chatgpt", "gpt", "claude", "bard", "gemini", "midjourney", "dall", "stable", "diffusion", "neural", "machine", "learning")
+)
+
+// === PERMISSION-BASED CATEGORIZATION SYSTEM END ===
 
 // Utility functions for image handling
 fun bitmapToBase64(bitmap: Bitmap): String {
@@ -236,48 +255,192 @@ class MainActivity : ComponentActivity() {
         unassignedAppsList: List<ApplicationInfo>,
         pm: PackageManager
     ): List<ApplicationInfo> {
-        val suggestions = mutableListOf<ApplicationInfo>()
-        var identifiedCategoryKey: String? = null
-        val folderNameLower = folder.name.lowercase()
-
-        // 1. Try to identify category from folder name
-        for ((categoryKey, keywords) in appCategoryKeywords) {
-            if (folderNameLower.contains(categoryKey.lowercase()) ||
-                keywords.any { keyword -> folderNameLower.contains(keyword) }) {
-                identifiedCategoryKey = categoryKey
-                break
-            }
-        }
-
-        // 2. If not from folder name, try from apps already in the folder
-        if (identifiedCategoryKey == null && folder.apps.isNotEmpty()) {
-            val appsToScanInFolder = folder.apps.takeLast(2)
-            for (appInFolder in appsToScanInFolder) {
-                val appLabel = appInFolder.loadLabel(pm).toString().lowercase()
-                for ((categoryKey, keywords) in appCategoryKeywords) {
-                    if (keywords.any { keyword -> appLabel.contains(keyword) }) {
-                        identifiedCategoryKey = categoryKey
-                        break
-                    }
-                }
-                if (identifiedCategoryKey != null) break
-            }
-        }
-
-        if (identifiedCategoryKey != null) {
-            val categoryKeywords = appCategoryKeywords[identifiedCategoryKey] ?: return emptyList()
-            unassignedAppsList.forEach { unassignedApp ->
-                val appLabel = unassignedApp.loadLabel(pm).toString().lowercase()
-                if (categoryKeywords.any { keyword -> appLabel.contains(keyword) }) {
-                    if (!folder.apps.any { it.packageName == unassignedApp.packageName } &&
-                        !suggestions.any { it.packageName == unassignedApp.packageName }) {
-                        suggestions.add(unassignedApp)
-                    }
-                }
-            }
-        }
-        return suggestions.take(5)
+        // Use ScoredCategorizer for intelligent suggestions
+        return ScoredCategorizer.getScoredSuggestions(folder, unassignedAppsList, pm)
     }
+
+
+    // === SMART PERMISSION-BASED APP CATEGORIZATION START ===
+
+    /**
+     * Smart permission-based app categorization system
+     * Uses multiple signals: permissions + app name keywords + exclusion rules
+     *
+     * @param app ApplicationInfo of the app to categorize
+     * @param pm PackageManager to access app permissions
+     * @return Most likely category as String, or "Other" if no match
+     */
+    fun categorizeAppByPermissions(app: ApplicationInfo, pm: PackageManager): String {
+        try {
+            val appName = app.loadLabel(pm).toString().lowercase()
+            val permissions = getAppPermissions(app, pm)
+
+            // === PERMISSION COMBINATION LOGIC START ===
+            val hasCamera = permissions.any { it.contains("CAMERA") }
+            val hasLocation = permissions.any { it.contains("LOCATION") || it.contains("GPS") }
+            val hasContacts = permissions.any { it.contains("CONTACTS") || it.contains("READ_CONTACTS") }
+            val hasPhone = permissions.any { it.contains("PHONE") || it.contains("CALL") }
+            val hasMicrophone = permissions.any { it.contains("RECORD_AUDIO") || it.contains("MICROPHONE") }
+            val hasStorage = permissions.any { it.contains("STORAGE") || it.contains("READ_EXTERNAL_STORAGE") }
+            val hasInternet = permissions.any { it.contains("INTERNET") }
+            val hasSms = permissions.any { it.contains("SMS") || it.contains("SEND_SMS") }
+            // === PERMISSION COMBINATION LOGIC END ===
+
+            // === KEYWORD MATCHING AGAINST APP NAMES START ===
+            fun hasKeywords(category: String): Boolean {
+                val keywords = permissionBasedKeywords[category] ?: return false
+                return keywords.any { keyword -> appName.contains(keyword) }
+            }
+            // === KEYWORD MATCHING AGAINST APP NAMES END ===
+
+            // === EXCLUSION RULES FOR FALSE POSITIVES START ===
+            val isSocialApp = hasKeywords("Social")
+            val isShoppingApp = hasKeywords("Shopping")
+            val isBankingApp = hasKeywords("Banking")
+            val isAIApp = hasKeywords("AI")
+            val isNavigationApp = hasKeywords("Navigation")
+            val isCommunicationApp = hasKeywords("Communication")
+            val isMusicApp = hasKeywords("Music")
+            val isPhotographyApp = hasKeywords("Photography")
+
+            // Exclusion: If app has social keywords, it's probably not photography despite camera permission
+            val excludePhotography = isSocialApp || isShoppingApp || isBankingApp
+            // === EXCLUSION RULES FOR FALSE POSITIVES END ===
+
+            // === PHOTOGRAPHY CATEGORY DETECTION ===
+            if (hasCamera && hasStorage && !excludePhotography && !hasHeavyInternetUsage(permissions)) {
+                return "Photography"
+            }
+
+            // === SOCIAL MEDIA CATEGORY DETECTION ===
+            if (isSocialApp || (hasCamera && hasContacts && hasInternet)) {
+                return "Social"
+            }
+
+            // === SHOPPING CATEGORY DETECTION ===
+            if (isShoppingApp || (hasCamera && hasInternet && appName.contains(Regex("(shop|buy|store|market|commerce)")))) {
+                return "Shopping"
+            }
+
+            // === NAVIGATION CATEGORY DETECTION ===
+            if (isNavigationApp || (hasLocation && hasInternet && !hasCamera)) {
+                return "Navigation"
+            }
+
+            // === COMMUNICATION CATEGORY DETECTION ===
+            if (isCommunicationApp || (hasContacts && (hasPhone || hasSms))) {
+                return "Communication"
+            }
+
+            // === MUSIC CATEGORY DETECTION ===
+            if (isMusicApp || (hasMicrophone && !hasCamera && appName.contains(Regex("(music|song|audio|player|sound)")))) {
+                return "Music"
+            }
+
+            // === BANKING CATEGORY DETECTION START ===
+            if (isBankingApp || (hasCamera && appName.contains(Regex("(bank|pay|wallet|finance|account|deposit|check)")))) {
+                return "Banking"
+            }
+            // === BANKING CATEGORY DETECTION END ===
+
+            // === AI CATEGORY DETECTION START ===
+            if (isAIApp || (hasInternet && appName.contains(Regex("(ai|artificial|intelligence|chatgpt|gpt|claude|bard|gemini|midjourney|dall|stable|diffusion|neural|machine|learning)")))) {
+                return "AI"
+            }
+            // === AI CATEGORY DETECTION END ===
+
+            // Fallback to existing simple categorization
+            for ((category, keywords) in appCategoryKeywords) {
+                if (keywords.any { keyword -> appName.contains(keyword) }) {
+                    return category
+                }
+            }
+
+            return "Other"
+
+        } catch (e: Exception) {
+            // Fallback for any errors
+            return "Other"
+        }
+    }
+
+    /**
+     * Helper function to get app permissions
+     */
+    private fun getAppPermissions(app: ApplicationInfo, pm: PackageManager): List<String> {
+        return try {
+            val packageInfo = pm.getPackageInfo(app.packageName, PackageManager.GET_PERMISSIONS)
+            packageInfo.requestedPermissions?.toList() ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Helper function to detect heavy internet usage patterns
+     */
+    private fun hasHeavyInternetUsage(permissions: List<String>): Boolean {
+        // Apps with these permissions likely have heavy internet usage
+        val heavyInternetIndicators = listOf(
+            "ACCESS_WIFI_STATE",
+            "CHANGE_WIFI_STATE",
+            "ACCESS_NETWORK_STATE",
+            "CHANGE_NETWORK_STATE",
+            "WAKE_LOCK" // Often used by apps that need constant connectivity
+        )
+
+        return heavyInternetIndicators.count { indicator ->
+            permissions.any { it.contains(indicator) }
+        } >= 2 // If 2+ heavy internet indicators, consider it heavy usage
+    }
+
+    // === SMART PERMISSION-BASED APP CATEGORIZATION END ===
+
+    // === DEMONSTRATION FUNCTION START ===
+    /**
+     * Demonstration function showing how the smart categorization works
+     * This shows how Instagram would be correctly classified as "Social"
+     * despite having camera permissions
+     */
+    fun demonstrateSmartCategorization(pm: PackageManager) {
+        // Example: Instagram with camera permissions but social keywords
+        val mockInstagramApp = object : ApplicationInfo() {
+            override fun loadLabel(pm: PackageManager): CharSequence {
+                return "Instagram"
+            }
+        }.apply {
+            packageName = "com.instagram.android"
+        }
+
+        // Mock Instagram permissions (camera + internet + storage + contacts)
+        val mockInstagramPermissions = listOf(
+            "android.permission.CAMERA",
+            "android.permission.INTERNET",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.READ_CONTACTS",
+            "android.permission.ACCESS_NETWORK_STATE"
+        )
+
+        // Test the categorization
+        val category = categorizeAppByPermissions(mockInstagramApp, pm)
+        println("Instagram would be categorized as: $category")
+        // Expected output: "Social" (not "Photography" despite camera permission)
+
+        // Example: Camera app with photography keywords
+        val mockCameraApp = object : ApplicationInfo() {
+            override fun loadLabel(pm: PackageManager): CharSequence {
+                return "Pro Camera"
+            }
+        }.apply {
+            packageName = "com.camera.pro"
+        }
+
+        val category2 = categorizeAppByPermissions(mockCameraApp, pm)
+        println("Pro Camera would be categorized as: $category2")
+        // Expected output: "Photography"
+    }
+    // === DEMONSTRATION FUNCTION END ===
+    
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -291,6 +454,7 @@ class MainActivity : ComponentActivity() {
         }
         val sortedApps = launchableApps.sortedBy { it.loadLabel(pm).toString() }
         val (initialFolders, initialUnassignedApps) = loadFolders(pm, sortedApps)
+
 
         setContent {
             val folders = remember { mutableStateListOf<AppFolder>().apply { addAll(initialFolders) } }
@@ -341,6 +505,7 @@ fun FoldersScreen(
     var suggestedAppsForDialog by remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
     var activeFolderForSuggestion by remember { mutableStateOf<AppFolder?>(null) }
 
+
     // Educational Popup state
     var showEducationalPopup by remember { mutableStateOf(false) }
     var educationalPopupShown by remember {
@@ -386,6 +551,7 @@ fun FoldersScreen(
             }
         )
     }
+
 
     // Educational Popup for Intelligent Folder Suggestions
     if (showEducationalPopup) {

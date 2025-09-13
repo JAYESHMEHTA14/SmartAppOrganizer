@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">subtitle</string>
+    <string name="accessibility_description">Extracts subtitle text from video apps like YouTube to display as overlay captions for accessibility and convenience.</string>
+</resources>
